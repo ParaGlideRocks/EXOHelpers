@@ -14,7 +14,9 @@
     Path to the text file containing one user email address (UPN) per line.
 
 .PARAMETER MigrationEndpoint
-    The migration endpoint name (on-premises MRS proxy endpoint) for the hybrid migration.
+    The Migration Endpoint identity (Name) that was created in Exchange Online
+    using New-MigrationEndpoint (for example, "OnpremEndpoint"). This value is
+    passed to New-MigrationBatch as -SourceEndpoint.
 
 .PARAMETER TargetDeliveryDomain
     The target delivery domain for the migration (e.g., "contoso.mail.onmicrosoft.com").
@@ -32,39 +34,37 @@
     Automatically start the migration batch after creation.
 
 .PARAMETER AutoComplete
-    Automatically complete the migration batch (cutover) after sync finishes.
+    Automatically complete the migration batch after the initial synchronization finishes.
 
 .PARAMETER LogFile
     Path to the log file. Defaults to a timestamped file in the script directory.
 
-.PARAMETER SourceEndpoint
-    If specified, uses this as the source endpoint name. Used when the migration endpoint
-    must be looked up by name rather than auto-detected.
-
 .PARAMETER BadItemLimit
-    Maximum number of bad items to skip per mailbox. Defaults to 10.
+    (Deprecated in Exchange Online) Maximum number of bad items to skip per mailbox.
+    If omitted, the script won't pass BadItemLimit to New-MigrationBatch.
 
 .PARAMETER LargeItemLimit
-    Maximum number of large items to skip per mailbox. Defaults to 10.
+    (Deprecated in Exchange Online) Maximum number of large items to skip per mailbox.
+    If omitted, the script won't pass LargeItemLimit to New-MigrationBatch.
 
 .PARAMETER WhatIf
     Preview changes without actually creating migration batches.
 
 .EXAMPLE
     .\Start-EXOMigrationBatch.ps1 -UserFile "C:\Migration\Users.txt" `
-        -MigrationEndpoint "mail.contoso.com" `
+        -MigrationEndpoint "OnpremEndpoint" `
         -TargetDeliveryDomain "contoso.mail.onmicrosoft.com"
 
 .EXAMPLE
     .\Start-EXOMigrationBatch.ps1 -UserFile "C:\Migration\Users.txt" `
-        -MigrationEndpoint "mail.contoso.com" `
+        -MigrationEndpoint "OnpremEndpoint" `
         -TargetDeliveryDomain "contoso.mail.onmicrosoft.com" `
         -BatchSize 25 -AutoStart -AutoComplete `
         -NotificationEmails "admin@contoso.com"
 
 .EXAMPLE
     .\Start-EXOMigrationBatch.ps1 -UserFile "C:\Migration\Users.txt" `
-        -MigrationEndpoint "mail.contoso.com" `
+        -MigrationEndpoint "OnpremEndpoint" `
         -TargetDeliveryDomain "contoso.mail.onmicrosoft.com" -WhatIf
 
 .NOTES
@@ -79,7 +79,7 @@ param(
     [ValidateScript({ Test-Path $_ -PathType Leaf })]
     [string]$UserFile,
 
-    [Parameter(Mandatory = $true, HelpMessage = "On-premises migration endpoint (MRS proxy FQDN).")]
+    [Parameter(Mandatory = $true, HelpMessage = "Migration endpoint identity (Name) in Exchange Online (for example, 'OnpremEndpoint').")]
     [string]$MigrationEndpoint,
 
     [Parameter(Mandatory = $true, HelpMessage = "Target delivery domain (e.g. contoso.mail.onmicrosoft.com).")]
@@ -141,7 +141,17 @@ function Write-Log {
         default   { Write-Host $entry -ForegroundColor Cyan }
     }
 
-    Add-Content -Path $LogFile -Value $entry -ErrorAction SilentlyContinue
+    try {
+        $logDir = Split-Path -Path $LogFile -Parent
+        if ($logDir -and -not (Test-Path -Path $logDir -PathType Container)) {
+            New-Item -Path $logDir -ItemType Directory -Force | Out-Null
+        }
+
+        Add-Content -Path $LogFile -Value $entry -ErrorAction Stop
+    }
+    catch {
+        Write-Host "[WARNING] Unable to write to log file '$LogFile': $_" -ForegroundColor Yellow
+    }
 }
 
 #endregion
@@ -263,7 +273,7 @@ function New-MigrationCSV {
 function Resolve-MigrationEndpoint {
     <#
     .SYNOPSIS
-        Ensures the migration endpoint exists or creates it.
+        Verifies the migration endpoint exists.
     .OUTPUTS
         The MigrationEndpoint object, or $null on failure.
     #>
@@ -281,7 +291,7 @@ function Resolve-MigrationEndpoint {
     }
     catch {
         Write-Log "Migration endpoint '$EndpointName' not found. Please create it first using New-MigrationEndpoint." -Level ERROR
-        Write-Log "Example:  New-MigrationEndpoint -ExchangeRemoteMove -Name '$EndpointName' -RemoteServer '$EndpointName' -Credentials (Get-Credential)" -Level WARNING
+        Write-Log "Example:  $cred = Get-Credential; New-MigrationEndpoint -ExchangeRemoteMove -Name 'OnpremEndpoint' -Autodiscover -EmailAddress admin@contoso.com -Credentials $cred" -Level WARNING
         return $null
     }
 }
@@ -297,6 +307,7 @@ function New-EXOMigrationBatch {
     .OUTPUTS
         $true on success, $false on failure.
     #>
+    [CmdletBinding(SupportsShouldProcess = $true)]
     param(
         [Parameter(Mandatory)]
         [string]$BatchName,
@@ -321,48 +332,55 @@ function New-EXOMigrationBatch {
         [switch]$Complete
     )
 
-    $params = @{
-        Name                       = $BatchName
-        SourceEndpoint             = $Endpoint
-        TargetDeliveryDomain       = $TargetDelivery
-        CSVData                    = [System.IO.File]::ReadAllBytes($CSVPath)
-        ErrorAction                = "Stop"
-    }
-
-    # BadItemLimit and LargeItemLimit are deprecated in Exchange Online.
-    # Only include them if explicitly provided by the caller.
-    if ($PSBoundParameters.ContainsKey('BadItems')) {
-        Write-Log "BadItemLimit is deprecated in Exchange Online. Consider using Data Consistency Score instead." -Level WARNING
-        $params["BadItemLimit"] = $BadItems
-    }
-
-    if ($PSBoundParameters.ContainsKey('LargeItems')) {
-        Write-Log "LargeItemLimit is deprecated in Exchange Online. Consider using Data Consistency Score instead." -Level WARNING
-        $params["LargeItemLimit"] = $LargeItems
-    }
-
-    if ($Notifications) {
-        $params["NotificationEmails"] = $Notifications
-    }
-
-    if ($Start) {
-        $params["AutoStart"] = $true
-    }
-
-    if ($Complete) {
-        $params["CompleteAfter"] = (Get-Date).AddHours(1)
-        $params["AutoComplete"] = $true
+    if (-not (Test-Path -Path $CSVPath -PathType Leaf)) {
+        Write-Log "CSVPath not found for batch '$BatchName': $CSVPath" -Level ERROR
+        return $false
     }
 
     try {
+        $csvData = [System.IO.File]::ReadAllBytes($CSVPath)
+
+        $params = @{
+            Name                 = $BatchName
+            SourceEndpoint       = $Endpoint
+            TargetDeliveryDomain = $TargetDelivery
+            CSVData              = $csvData
+            ErrorAction          = "Stop"
+        }
+
+        # BadItemLimit and LargeItemLimit are deprecated in Exchange Online.
+        # Only include them if explicitly provided by the caller.
+        if ($PSBoundParameters.ContainsKey('BadItems')) {
+            Write-Log "BadItemLimit is deprecated in Exchange Online. Consider using Data Consistency Score instead." -Level WARNING
+            $params["BadItemLimit"] = $BadItems
+        }
+
+        if ($PSBoundParameters.ContainsKey('LargeItems')) {
+            Write-Log "LargeItemLimit is deprecated in Exchange Online. Consider using Data Consistency Score instead." -Level WARNING
+            $params["LargeItemLimit"] = $LargeItems
+        }
+
+        if ($Notifications) {
+            $params["NotificationEmails"] = $Notifications
+        }
+
+        if ($Start) {
+            $params["AutoStart"] = $true
+        }
+
+        if ($Complete) {
+            $params["AutoComplete"] = $true
+        }
+
         Write-Log "Creating migration batch '$BatchName' ($Endpoint -> $TargetDelivery)..."
 
-        if ($PSCmdlet.ShouldProcess($BatchName, "Create Migration Batch")) {
-            New-MigrationBatch @params | Out-Null
-            Write-Log "Migration batch '$BatchName' created successfully." -Level SUCCESS
+        New-MigrationBatch @params | Out-Null
+
+        if ($WhatIfPreference) {
+            Write-Log "[WhatIf] Would create migration batch '$BatchName'." -Level WARNING
         }
         else {
-            Write-Log "[WhatIf] Would create migration batch '$BatchName'." -Level WARNING
+            Write-Log "Migration batch '$BatchName' created successfully." -Level SUCCESS
         }
 
         return $true
@@ -457,7 +475,7 @@ try {
     Write-Log "═══════════════════════════════════════════════════════════"
     Write-Log "Script started at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
     Write-Log "User file      : $UserFile"
-    Write-Log "Endpoint       : $MigrationEndpoint"
+    Write-Log "Source endpoint: $MigrationEndpoint"
     Write-Log "Target domain  : $TargetDeliveryDomain"
     Write-Log "Batch size     : $BatchSize"
     if ($PSBoundParameters.ContainsKey('BadItemLimit'))   { Write-Log "Bad item limit : $BadItemLimit (deprecated in EXO)" -Level WARNING }
