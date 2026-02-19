@@ -104,13 +104,16 @@ param(
     [Parameter(Mandatory = $false)]
     [string]$LogFile = (Join-Path $PSScriptRoot ("Start-EXOMigrationBatch_{0}.log" -f (Get-Date -Format "yyyyMMdd_HHmmss"))),
 
+    # NOTE: BadItemLimit and LargeItemLimit are deprecated in Exchange Online.
+    # Microsoft recommends reviewing the Data Consistency Score instead.
+    # These parameters are kept for backward compatibility but may be removed in the future.
     [Parameter(Mandatory = $false)]
     [ValidateRange(0, 1000)]
-    [int]$BadItemLimit = 10,
+    [int]$BadItemLimit,
 
     [Parameter(Mandatory = $false)]
     [ValidateRange(0, 1000)]
-    [int]$LargeItemLimit = 10
+    [int]$LargeItemLimit
 )
 
 #region ── Logging ──
@@ -307,9 +310,9 @@ function New-EXOMigrationBatch {
         [Parameter(Mandatory)]
         [string]$Endpoint,
 
-        [int]$BadItems = 10,
+        [int]$BadItems,
 
-        [int]$LargeItems = 10,
+        [int]$LargeItems,
 
         [string[]]$Notifications,
 
@@ -323,10 +326,19 @@ function New-EXOMigrationBatch {
         SourceEndpoint             = $Endpoint
         TargetDeliveryDomain       = $TargetDelivery
         CSVData                    = [System.IO.File]::ReadAllBytes($CSVPath)
-        BadItemLimit               = $BadItems
-        LargeItemLimit             = $LargeItems
-        AutoRetryCount             = 4
         ErrorAction                = "Stop"
+    }
+
+    # BadItemLimit and LargeItemLimit are deprecated in Exchange Online.
+    # Only include them if explicitly provided by the caller.
+    if ($PSBoundParameters.ContainsKey('BadItems')) {
+        Write-Log "BadItemLimit is deprecated in Exchange Online. Consider using Data Consistency Score instead." -Level WARNING
+        $params["BadItemLimit"] = $BadItems
+    }
+
+    if ($PSBoundParameters.ContainsKey('LargeItems')) {
+        Write-Log "LargeItemLimit is deprecated in Exchange Online. Consider using Data Consistency Score instead." -Level WARNING
+        $params["LargeItemLimit"] = $LargeItems
     }
 
     if ($Notifications) {
@@ -448,8 +460,8 @@ try {
     Write-Log "Endpoint       : $MigrationEndpoint"
     Write-Log "Target domain  : $TargetDeliveryDomain"
     Write-Log "Batch size     : $BatchSize"
-    Write-Log "Bad item limit : $BadItemLimit"
-    Write-Log "Large item lim : $LargeItemLimit"
+    if ($PSBoundParameters.ContainsKey('BadItemLimit'))   { Write-Log "Bad item limit : $BadItemLimit (deprecated in EXO)" -Level WARNING }
+    if ($PSBoundParameters.ContainsKey('LargeItemLimit')) { Write-Log "Large item lim : $LargeItemLimit (deprecated in EXO)" -Level WARNING }
     Write-Log "Auto-start     : $AutoStart"
     Write-Log "Auto-complete  : $AutoComplete"
     Write-Log "Log file       : $LogFile"
@@ -520,16 +532,20 @@ try {
         }
 
         # Create the migration batch
+        # Build optional splat for deprecated parameters
+        $optionalParams = @{}
+        if ($PSBoundParameters.ContainsKey('BadItemLimit'))   { $optionalParams['BadItems']  = $BadItemLimit }
+        if ($PSBoundParameters.ContainsKey('LargeItemLimit')) { $optionalParams['LargeItems'] = $LargeItemLimit }
+
         $success = New-EXOMigrationBatch `
             -BatchName      $batchName `
             -CSVPath        $csvPath `
             -TargetDelivery $TargetDeliveryDomain `
             -Endpoint       $MigrationEndpoint `
-            -BadItems       $BadItemLimit `
-            -LargeItems     $LargeItemLimit `
             -Notifications  $NotificationEmails `
             -Start:$AutoStart `
-            -Complete:$AutoComplete
+            -Complete:$AutoComplete `
+            @optionalParams
 
         if ($success) {
             $createdBatches.Add($batchName)
