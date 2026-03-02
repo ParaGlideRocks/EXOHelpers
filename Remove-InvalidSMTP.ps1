@@ -99,55 +99,6 @@ catch {
     exit 1
 }
 
-# --- Counters ---
-$totalProcessed   = 0
-$totalRemoved      = 0
-$totalSkipped      = 0
-
-[CmdletBinding()]
-param(
-    [Parameter(Mandatory = $true)]
-    [string]$UserFile,
-
-    [Parameter(Mandatory = $true)]
-    [string[]]$InvalidDomains,
-
-    [Parameter(Mandatory = $false)]
-    [string]$LogFile = (Join-Path $PSScriptRoot ("Remove-InvalidSMTP_{0}.log" -f (Get-Date -Format "yyyyMMdd_HHmmss")))
-)
-
-#region Logging Functions
-
-function Write-Log {
-    param(
-        [Parameter(Mandatory)]
-        [string]$Message,
-
-        [ValidateSet("INFO", "WARNING", "ERROR", "SUCCESS")]
-        [string]$Level = "INFO"
-    )
-
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $entry = "[$timestamp] [$Level] $Message"
-
-    switch ($Level) {
-        "ERROR"   { Write-Host $entry -ForegroundColor Red }
-        "WARNING" { Write-Host $entry -ForegroundColor Yellow }
-        "SUCCESS" { Write-Host $entry -ForegroundColor Green }
-        default   { Write-Host $entry -ForegroundColor Cyan }
-    }
-
-    Add-Content -Path $LogFile -Value $entry -ErrorAction SilentlyContinue
-}
-
-function Write-LogSeparator {
-    $separator = "=" * 80
-    Add-Content -Path $LogFile -Value $separator -ErrorAction SilentlyContinue
-    Write-Host $separator -ForegroundColor DarkGray
-}
-
-#endregion
-
 #region Main Execution
 
 Write-LogSeparator
