@@ -15,14 +15,9 @@
 .PARAMETER LogFile
     Path to the log file. Defaults to a timestamped file in the script directory.
 
-.PARAMETER WhatIf
-    Preview changes without actually removing addresses.
-
 .EXAMPLE
     .\Remove-InvalidSMTP.ps1 -UserFile "C:\Users.txt" -InvalidDomains "olddomain.com","legacy.org"
 
-.EXAMPLE
-    .\Remove-InvalidSMTP.ps1 -UserFile "C:\Users.txt" -InvalidDomains "olddomain.com" -WhatIf
 #>
 
 [CmdletBinding(SupportsShouldProcess)]
@@ -107,35 +102,9 @@ catch {
 # --- Counters ---
 $totalProcessed   = 0
 $totalRemoved      = 0
-$totalSkipped      = 0<#
-.SYNOPSIS
-    Removes SMTP addresses associated with invalid domains from Exchange users.
+$totalSkipped      = 0
 
-.DESCRIPTION
-    Reads a list of UPNs from a text file, retrieves their SMTP proxy addresses,
-    disables the Email Address Policy on each mailbox, and removes addresses matching
-    the specified invalid domains. The policy is NOT re-enabled after removal.
-
-.PARAMETER UserFile
-    Path to the text file containing one UPN per line.
-
-.PARAMETER InvalidDomains
-    Array of invalid domain names (e.g., "olddomain.com", "deprecated.org").
-
-.PARAMETER LogFile
-    Path to the log file. Defaults to a timestamped file in the script directory.
-
-.PARAMETER WhatIf
-    Preview changes without actually removing addresses.
-
-.EXAMPLE
-    .\Remove-InvalidSMTP.ps1 -UserFile "C:\Users.txt" -InvalidDomains "olddomain.com","legacy.org"
-
-.EXAMPLE
-    .\Remove-InvalidSMTP.ps1 -UserFile "C:\Users.txt" -InvalidDomains "olddomain.com" -WhatIf
-#>
-
-[CmdletBinding(SupportsShouldProcess)]
+[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
     [string]$UserFile,
