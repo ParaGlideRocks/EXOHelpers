@@ -219,20 +219,27 @@ function Split-IntoBatches {
     #>
     param(
         [Parameter(Mandatory)]
-        [array]$Items,
+        [object[]]$Items,
 
         [Parameter(Mandatory)]
+        [ValidateRange(1, [int]::MaxValue)]
         [int]$Size
     )
 
     $batches = [System.Collections.Generic.List[object]]::new()
-    for ($i = 0; $i -lt $Items.Count; $i += $Size) {
-        $end   = [Math]::Min($i + $Size, $Items.Count) - 1
-        $chunk = $Items[$i..$end]
-        $batches.Add(@($chunk))
+
+    if (-not $Items -or $Items.Count -eq 0) {
+        return ,$batches
     }
 
-    return $batches
+    for ($i = 0; $i -lt $Items.Count; $i += $Size) {
+        $end   = [Math]::Min($i + $Size, $Items.Count) - 1
+        $chunk = @($Items[$i..$end])
+        $null = $batches.Add($chunk)
+    }
+
+    # Return as a single object so PowerShell doesn't enumerate/flatten it
+    return ,$batches
 }
 
 function New-MigrationCSV {
