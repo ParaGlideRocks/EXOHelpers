@@ -90,14 +90,25 @@ foreach ($Site in $OneDrives) {
             
             # Set original owner as site collection admin
             Write-Log "Setting $UserUPN as site collection admin" "INFO"
-            Set-SPOUser -Site $Site.Url -LoginName $UserUPN `
-                -IsSiteCollectionAdmin $true -ErrorAction Stop
+            $setSPOUserParams = @{
+                Site                  = $Site.Url
+                LoginName             = $UserUPN
+                IsSiteCollectionAdmin = $true
+                ErrorAction           = 'Stop'
+            }
+            Write-log "Set-SPOUser @setSPOUserParams" "INFO"
+
             Write-Log "Successfully set $UserUPN as admin" "SUCCESS"
 
             # Remove Filelock from site collection admin
             Write-Log "Removing $FileLockAccount from site collection admins" "INFO"
-            Set-SPOUser -Site $Site.Url -LoginName $FileLockAccount `
-                -IsSiteCollectionAdmin $false -ErrorAction SilentlyContinue
+            $removeFileLockParams = @{
+                Site                  = $Site.Url
+                LoginName             = $FileLockAccount
+                IsSiteCollectionAdmin = $false
+                ErrorAction           = 'SilentlyContinue'
+            }
+            Write-log "Set-SPOUser @removeFileLockParams" "INFO"
             Write-Log "Successfully removed $FileLockAccount from admins" "SUCCESS"
             
     }
