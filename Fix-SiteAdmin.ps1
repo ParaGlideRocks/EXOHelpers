@@ -4,6 +4,12 @@
 # Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
 
 param(
+    [Parameter(Mandatory = $true)]
+    [string]$AdminUrl,
+
+    [Parameter(Mandatory = $true)]
+    [string]$FileLockAccount,
+
     [string]$LogPath = "$PSScriptRoot\OneDrive_AdminManagement_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
 )
 
@@ -34,55 +40,72 @@ function Write-Log {
 
 # ...existing code...
 
-    # Process each OneDrive
-    $totalSites = $OneDrives.Count
-    $currentIndex = 0
+# URL Admin del tenant
+# Connessione
+Connect-SPOService -Url $AdminUrl
 
-    foreach ($Site in $OneDrives) {
-        $currentIndex++
-        $percentComplete = [int](($currentIndex / $totalSites) * 100)
+# Recupera tutti i OneDrive
+$OneDrives = Get-SPOSite -IncludePersonalSite $true -Limit All -Filter "Url -like '-my.sharepoint.com/personal/'" | ? { $_.Owner -eq $FileLockAccount }
 
-        Write-Progress `
-            -Activity "Processing OneDrive sites" `
-            -Status "Processing $currentIndex of $totalSites : $($Site.Url)" `
-            -PercentComplete $percentComplete
+# Process each OneDrive
+$totalSites = $OneDrives.Count
+$currentIndex = 0
 
-        try {
-            Write-Log "Processing OneDrive: $($Site.Url)" "INFO"
-            
-            $url = $Site.Url
-            $userPart = ($Site.Url -split "/")[-1]
-            
-            # Parse user information from URL
-            if ($userPart -match "^(.+)_([^_]+)_([^_]+)$") {
-                $localPart = $Matches[1] -replace "_", "."
-                $domainName = $Matches[2]
-                $domainExt = $Matches[3]
+foreach ($Site in $OneDrives) {
+    $currentIndex++
+    $percentComplete = [int](($currentIndex / $totalSites) * 100)
+
+    Write-Progress `
+        -Activity "Processing OneDrive sites" `
+        -Status "Processing $currentIndex of $totalSites : $($Site.Url)" `
+        -PercentComplete $percentComplete
+
+    try {
+        Write-Log "Processing OneDrive: $($Site.Url)" "INFO"
+        
+        $url = $Site.Url
+        $userPart = ($Site.Url -split "/")[-1]
+        
+        # Parse user information from URL
+        if ($userPart -match "^(.+?)_([a-zA-Z0-9]+)_([a-zA-Z0-9]+)_([a-zA-Z]{2,})$") {
+                # Subdomain format: user_tenant_onmicrosoft_com
+                $localPart  = $Matches[1] -replace "_", "."
+                $domainName = "$($Matches[2]).$($Matches[3])"
+                $domainExt  = $Matches[4]
                 $UserUPN = "$localPart@$domainName.$domainExt"
-                
-                Write-Log "Extracted UPN: $UserUPN" "INFO"
-                
-                # Remove Filelock from site collection admin
-                Write-Log "Removing $FileLockAccount from site collection admins" "INFO"
-                Set-SPOUser -Site $Site.Url -LoginName $FileLockAccount `
-                    -IsSiteCollectionAdmin $false -ErrorAction SilentlyContinue
-                Write-Log "Successfully removed $FileLockAccount from admins" "SUCCESS"
-                
-                # Set original owner as site collection admin
-                Write-Log "Setting $UserUPN as site collection admin" "INFO"
-                Set-SPOUser -Site $Site.Url -LoginName $UserUPN `
-                    -IsSiteCollectionAdmin $true -ErrorAction Stop
-                Write-Log "Successfully set $UserUPN as admin" "SUCCESS"
+            }
+            elseif ($userPart -match "^(.+)_([^_]+)_([^_]+)$") {
+                # Standard format: user_domain_com
+                $localPart  = $Matches[1] -replace "_", "."
+                $domainName = $Matches[2]
+                $domainExt  = $Matches[3]
+                $UserUPN = "$localPart@$domainName.$domainExt"
             }
             else {
-                Write-Log "Failed to parse URL format for: $userPart" "WARNING"
+                Write-Log "ERROR: Could not parse URL format for: $userPart" "ERROR"
+                Exit
             }
-        }
-        catch {
-            Write-Log "Error processing $($Site.Url): $($_.Exception.Message)" "ERROR"
-        }
-    }
+            
+            Write-Log "Extracted UPN: $UserUPN" "INFO"
+            
+            # Set original owner as site collection admin
+            Write-Log "Setting $UserUPN as site collection admin" "INFO"
+            Set-SPOUser -Site $Site.Url -LoginName $UserUPN `
+                -IsSiteCollectionAdmin $true -ErrorAction Stop
+            Write-Log "Successfully set $UserUPN as admin" "SUCCESS"
 
-    Write-Progress -Activity "Processing OneDrive sites" -Completed
+            # Remove Filelock from site collection admin
+            Write-Log "Removing $FileLockAccount from site collection admins" "INFO"
+            Set-SPOUser -Site $Site.Url -LoginName $FileLockAccount `
+                -IsSiteCollectionAdmin $false -ErrorAction SilentlyContinue
+            Write-Log "Successfully removed $FileLockAccount from admins" "SUCCESS"
+            
+    }
+    catch {
+        Write-Log "Error processing $($Site.Url): $($_.Exception.Message)" "ERROR"
+    }
+}
+
+Write-Progress -Activity "Processing OneDrive sites" -Completed
 
 # ...existing code...
