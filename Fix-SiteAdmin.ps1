@@ -45,7 +45,7 @@ function Write-Log {
 Connect-SPOService -Url $AdminUrl
 
 # Recupera tutti i OneDrive
-$OneDrives = Get-SPOSite -IncludePersonalSite $true -Limit All -Filter "Url -like '-my.sharepoint.com/personal/'" | ? { $_.Owner -eq $FileLockAccount }
+$OneDrives = Get-SPOSite -IncludePersonalSite $true -Limit All -Filter "Url -like '-my.sharepoint.com/personal/'" | Where-Object { $_.Owner -eq $FileLockAccount }
 
 # Process each OneDrive
 $totalSites = $OneDrives.Count
@@ -63,19 +63,11 @@ foreach ($Site in $OneDrives) {
     try {
         Write-Log "Processing OneDrive: $($Site.Url)" "INFO"
         
-        $url = $Site.Url
         $userPart = ($Site.Url -split "/")[-1]
         
         # Parse user information from URL
-        if ($userPart -match "^(.+?)_([a-zA-Z0-9]+)_([a-zA-Z0-9]+)_([a-zA-Z]{2,})$") {
-                # Subdomain format: user_tenant_onmicrosoft_com
-                $localPart  = $Matches[1] -replace "_", "."
-                $domainName = "$($Matches[2]).$($Matches[3])"
-                $domainExt  = $Matches[4]
-                $UserUPN = "$localPart@$domainName.$domainExt"
-            }
-            elseif ($userPart -match "^(.+)_([^_]+)_([^_]+)$") {
-                # Standard format: user_domain_com
+        if ($userPart -match "^(.+)_([^_]+)_([^_]+)$") {
+                  # Standard format: user_domain_com
                 $localPart  = $Matches[1] -replace "_", "."
                 $domainName = $Matches[2]
                 $domainExt  = $Matches[3]
@@ -96,7 +88,14 @@ foreach ($Site in $OneDrives) {
                 IsSiteCollectionAdmin = $true
                 ErrorAction           = 'Stop'
             }
-            Write-log "Set-SPOUser @setSPOUserParams" "INFO"
+            try {
+                Set-SPOUser @setSPOUserParams
+                Write-Log "Successfully set $UserUPN as admin" "SUCCESS"
+            }
+            catch {
+                Write-Log "Failed to set $UserUPN as admin on $($Site.Url): $($_.Exception.Message)" "ERROR"
+                continue
+            }
 
             Write-Log "Successfully set $UserUPN as admin" "SUCCESS"
 
@@ -108,7 +107,13 @@ foreach ($Site in $OneDrives) {
                 IsSiteCollectionAdmin = $false
                 ErrorAction           = 'SilentlyContinue'
             }
-            Write-log "Set-SPOUser @removeFileLockParams" "INFO"
+            try {
+                Set-SPOUser @removeFileLockParams
+                Write-Log "Successfully removed $FileLockAccount from admins" "SUCCESS"
+            }
+            catch {
+                Write-Log "Failed to remove $FileLockAccount on $($Site.Url): $($_.Exception.Message)" "ERROR"
+            }
             Write-Log "Successfully removed $FileLockAccount from admins" "SUCCESS"
             
     }
