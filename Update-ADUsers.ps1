@@ -35,6 +35,16 @@ function Write-Log {
     Add-Content -Path $LogPath -Value $line
 }
 
+function Throw-LoggedError {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    Write-Log -Level "ERROR" -Message $Message
+    throw $Message
+}
+
 function Test-ClearValue {
     param([object]$Value)
 
@@ -93,7 +103,7 @@ function Convert-ToBoolean {
         "disabled" { return $false }
 
         default {
-            throw "Invalid boolean value '$Value'. Use True/False, Yes/No, 1/0, Enabled/Disabled."
+            Throw-LoggedError -Message "Invalid boolean value '$Value'. Use True/False, Yes/No, 1/0, Enabled/Disabled."
         }
     }
 }
@@ -105,14 +115,38 @@ function Resolve-AdUser {
     )
 
     if (-not [string]::IsNullOrWhiteSpace($SamAccountName)) {
-        return Get-ADUser -Filter "SamAccountName -eq '$SamAccountName'" -Properties * -ErrorAction Stop
+        $adUser = @(Get-ADUser -Filter "SamAccountName -eq '$SamAccountName'" -Properties * -ErrorAction Stop)
+
+        if ($adUser.Count -eq 0) {
+            Write-Log -Level "WARN" -Message "Active Directory user with SamAccountName '$SamAccountName' was not found. Skipping this row."
+            return $null
+        }
+
+        if ($adUser.Count -gt 1) {
+            Write-Log -Level "WARN" -Message "Multiple Active Directory users were found with SamAccountName '$SamAccountName'. Skipping this row."
+            return $null
+        }
+
+        return $adUser[0]
     }
 
     if (-not [string]::IsNullOrWhiteSpace($UserPrincipalName)) {
-        return Get-ADUser -Filter "UserPrincipalName -eq '$UserPrincipalName'" -Properties * -ErrorAction Stop
+        $adUser = @(Get-ADUser -Filter "UserPrincipalName -eq '$UserPrincipalName'" -Properties * -ErrorAction Stop)
+
+        if ($adUser.Count -eq 0) {
+            Write-Log -Level "WARN" -Message "Active Directory user with UserPrincipalName '$UserPrincipalName' was not found. Skipping this row."
+            return $null
+        }
+
+        if ($adUser.Count -gt 1) {
+            Write-Log -Level "WARN" -Message "Multiple Active Directory users were found with UserPrincipalName '$UserPrincipalName'. Skipping this row."
+            return $null
+        }
+
+        return $adUser[0]
     }
 
-    throw "Row does not contain SamAccountName or UserPrincipalName."
+    Throw-LoggedError -Message "Row does not contain SamAccountName or UserPrincipalName."
 }
 
 function Resolve-ManagerDn {
@@ -131,8 +165,21 @@ function Resolve-ManagerDn {
         return $manager.DistinguishedName
     }
     catch {
-        throw "Manager '$ManagerValue' was not found in Active Directory."
+        Throw-LoggedError -Message "Manager '$ManagerValue' was not found in Active Directory."
     }
+}
+
+function Test-WorksheetExists {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    $worksheetInfo = Get-ExcelSheetInfo -Path $Path -ErrorAction Stop
+    return $worksheetInfo.Name -contains $Name
 }
 
 try {
@@ -143,29 +190,38 @@ try {
     Write-Log -Message "Log file: $LogPath"
 
     if (-not (Test-Path -Path $ExcelPath)) {
-        throw "Excel file not found: $ExcelPath"
+        Throw-LoggedError -Message "Excel file not found: $ExcelPath"
     }
 
     if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
-        throw "Module 'ImportExcel' is not installed. Install it with: Install-Module ImportExcel -Scope CurrentUser"
+        Throw-LoggedError -Message "Module 'ImportExcel' is not installed. Install it with: Install-Module ImportExcel -Scope CurrentUser"
     }
 
     if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
-        throw "Module 'ActiveDirectory' is not available. Install RSAT AD tools on this machine."
+        Throw-LoggedError -Message "Module 'ActiveDirectory' is not available. Install RSAT AD tools on this machine."
     }
 
     Import-Module ImportExcel -ErrorAction Stop
     Import-Module ActiveDirectory -ErrorAction Stop
 
+    if ([string]::IsNullOrWhiteSpace($WorksheetName)) {
+        Throw-LoggedError -Message "Worksheet name cannot be empty."
+    }
+
+    if (-not (Test-WorksheetExists -Path $ExcelPath -Name $WorksheetName)) {
+        Throw-LoggedError -Message "Worksheet '$WorksheetName' was not found in Excel file '$ExcelPath'."
+    }
+
     $rows = Import-Excel -Path $ExcelPath -WorksheetName $WorksheetName -ErrorAction Stop
 
     if (-not $rows -or $rows.Count -eq 0) {
-        throw "No rows were found in worksheet '$WorksheetName'."
+        Throw-LoggedError -Message "No rows were found in worksheet '$WorksheetName'."
     }
 
     $processed = 0
     $updated = 0
     $failed = 0
+    $skipped = 0
 
     foreach ($row in $rows) {
         $processed++
@@ -177,6 +233,11 @@ try {
             Write-Log -Message "Processing row $processed. SamAccountName='$samAccountName', UPN='$userPrincipalName'"
 
             $adUser = Resolve-AdUser -SamAccountName $samAccountName -UserPrincipalName $userPrincipalName
+
+            if ($null -eq $adUser) {
+                $skipped++
+                continue
+            }
 
             $setParams = @{
                 Identity    = $adUser.DistinguishedName
@@ -190,13 +251,12 @@ try {
                 GivenName     = "GivenName"
                 Surname       = "Surname"
                 DisplayName   = "DisplayName"
-                EmailAddress  = "EmailAddress"
                 Title         = "Title"
                 Department    = "Department"
                 Company       = "Company"
                 Office        = "Office"
-                OfficePhone   = "OfficePhone"
-                MobilePhone   = "MobilePhone"
+                TelephoneNumber   = "TelephoneNumber"
+                Mobile   = "Mobile"
                 Description   = "Description"
                 StreetAddress = "StreetAddress"
                 City          = "City"
@@ -222,8 +282,8 @@ try {
                         Department    = "department"
                         Company       = "company"
                         Office        = "physicalDeliveryOfficeName"
-                        OfficePhone   = "telephoneNumber"
-                        MobilePhone   = "mobile"
+                        telephoneNumber   = "telephoneNumber"
+                        Mobile   = "mobile"
                         Description   = "description"
                         StreetAddress = "streetAddress"
                         City          = "l"
@@ -300,14 +360,15 @@ try {
             Write-Log -Level "ERROR" -Message "Row $processed failed: $($_.Exception.Message)"
 
             if ($StopOnError) {
+                Write-Log -Level "ERROR" -Message "StopOnError is enabled. Execution will stop after row $processed."
                 throw
             }
         }
     }
 
-    Write-Log -Message "Bulk AD update finished. Processed=$processed Updated=$updated Failed=$failed"
+    Write-Log -Message "Bulk AD update finished. Processed=$processed Updated=$updated Skipped=$skipped Failed=$failed"
 }
 catch {
     Write-Log -Level "ERROR" -Message "Execution stopped: $($_.Exception.Message)"
-    throw
+    return
 }
