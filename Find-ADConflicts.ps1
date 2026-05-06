@@ -12,7 +12,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
  
-function Normalize-Address {
+function ConvertTo-NormalizedAddress {
     param(
         [Parameter(Mandatory)]
         [string]$Value
@@ -63,10 +63,6 @@ if (-not (Get-Command -Name Get-ADUser -ErrorAction SilentlyContinue)) {
     throw "Get-ADUser was not found. Install/Import the ActiveDirectory module (RSAT) and retry."
 }
  
-if (-not (Get-Command -Name Get-ADObject -ErrorAction SilentlyContinue)) {
-    throw "Get-ADObject was not found. Install/Import the ActiveDirectory module (RSAT) and retry."
-}
- 
 $users = Get-ADUser -Filter * -Properties mail, proxyAddresses, displayName, userPrincipalName
  
 # Contacts are returned as ADObject; select a consistent property surface
@@ -77,39 +73,39 @@ $contacts = Get-ADObject -LDAPFilter '(objectClass=contact)' -Properties mail, p
         @{ Name = 'ProxyAddresses'; Expression = { $_.ProxyAddresses } }
     )
  
-## Build indexes for fast, consistent matching (and avoid array-valued CSV fields)
-$usersByMail = @{}     # normalized mail -> [System.Collections.Generic.List[object]]
-$usersByProxy = @{}    # normalized proxy value -> [System.Collections.Generic.List[object]]
+## Build a unified address index so mail/proxy collisions are detected across both fields
+$usersByAddress = @{}  # normalized address -> [System.Collections.Generic.List[object]]
  
 foreach ($user in $users) {
     if ($user.Mail) {
-        $key = Normalize-Address -Value $user.Mail
+        $key = ConvertTo-NormalizedAddress -Value $user.Mail
         if ($key) {
-            if (-not $usersByMail.ContainsKey($key)) {
-                $usersByMail[$key] = New-Object System.Collections.Generic.List[object]
+            if (-not $usersByAddress.ContainsKey($key)) {
+                $usersByAddress[$key] = New-Object System.Collections.Generic.List[object]
             }
-            $usersByMail[$key].Add($user)
+            $usersByAddress[$key].Add($user)
         }
     }
  
     foreach ($proxyAddr in @($user.ProxyAddresses)) {
-        if (-not $proxyAddr) { continue }
-        $key = Normalize-Address -Value ([string]$proxyAddr)
+        $key = if ($proxyAddr) { ConvertTo-NormalizedAddress -Value ([string]$proxyAddr) }
         if (-not $key) { continue }
  
-        if (-not $usersByProxy.ContainsKey($key)) {
-            $usersByProxy[$key] = New-Object System.Collections.Generic.List[object]
+        if (-not $usersByAddress.ContainsKey($key)) {
+            $usersByAddress[$key] = New-Object System.Collections.Generic.List[object]
         }
-        $usersByProxy[$key].Add($user)
+        if (-not $usersByAddress[$key].Contains($user)) {
+            $usersByAddress[$key].Add($user)
+        }
     }
 }
  
 foreach ($contact in $contacts) {
     # Mail address conflicts
     if ($contact.Mail) {
-        $contactMailKey = Normalize-Address -Value $contact.Mail
-        if ($contactMailKey -and $usersByMail.ContainsKey($contactMailKey)) {
-            foreach ($user in $usersByMail[$contactMailKey]) {
+        $contactMailKey = ConvertTo-NormalizedAddress -Value $contact.Mail
+        if ($contactMailKey -and $usersByAddress.ContainsKey($contactMailKey)) {
+            foreach ($user in $usersByAddress[$contactMailKey]) {
                 $conflicts.Add((New-ConflictRow -ConflictType 'Mail Address' -Severity 'High' -Contact $contact -User $user -ContactMail $contact.Mail -MatchedValue $contactMailKey))
             }
         }
@@ -117,13 +113,12 @@ foreach ($contact in $contacts) {
  
     # proxyAddresses conflicts
     foreach ($proxyAddr in @($contact.ProxyAddresses)) {
-        if (-not $proxyAddr) { continue }
-        $proxyString = [string]$proxyAddr
-        $proxyKey = Normalize-Address -Value $proxyString
+        $proxyString = if ($proxyAddr) { [string]$proxyAddr }
+        $proxyKey = if ($proxyString) { ConvertTo-NormalizedAddress -Value $proxyString }
         if (-not $proxyKey) { continue }
  
-        if ($usersByProxy.ContainsKey($proxyKey)) {
-            foreach ($user in $usersByProxy[$proxyKey]) {
+        if ($usersByAddress.ContainsKey($proxyKey)) {
+            foreach ($user in $usersByAddress[$proxyKey]) {
                 $conflicts.Add((New-ConflictRow -ConflictType 'ProxyAddress' -Severity 'Critical' -Contact $contact -User $user -ContactProxyAddress $proxyString -MatchedValue $proxyKey))
             }
         }
