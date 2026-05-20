@@ -1,0 +1,36 @@
+{
+  "timeframe": {
+    "startTime": "2026-05-19T00:00:00",
+    "endTime": "2026-05-20T23:59:59",
+    "useCurrentTimeAsEnd": true,
+    "lastHours": null
+  },
+  "servers": [
+    {
+      "name": "SERVER01",
+      "eventLogs": [
+        {
+          "logName": "System",
+          "eventIds": [ 1074, 6006, 6008, 41, 7036 ]
+        },
+        {
+          "logName": "Application",
+          "eventIds": [ 1000, 1001 ]
+        },
+        {
+          "logName": "Security",
+          "eventIds": [ 4624, 4625, 4648 ]
+        }
+      ]
+    },
+    {
+      "name": "SERVER02",
+      "eventLogs": [
+        {
+          "logName": "System",
+          "eventIds": []
+        }
+      ]
+    }
+  ]
+}
