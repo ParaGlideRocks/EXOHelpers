@@ -1,0 +1,230 @@
+﻿[
+    {
+        "Domain":  "\"agustawestland.com\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    },
+    {
+        "Domain":  "\"alenia.it\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    },
+    {
+        "Domain":  "\"contractor.koptergroup.com\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    },
+    {
+        "Domain":  "\"ext.leonardocompany.com\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    },
+    {
+        "Domain":  "\"finmeccanica.com\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    },
+    {
+        "Domain":  "\"fondazioneleonardo-cdm.com\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    },
+    {
+        "Domain":  "\"fondazioneleonardo.com\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    },
+    {
+        "Domain":  "\"koptergroup.com\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    },
+    {
+        "Domain":  "\"koptergroup.de\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    },
+    {
+        "Domain":  "\"leonardo-codemar.com\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    },
+    {
+        "Domain":  "\"leonardo.com\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    },
+    {
+        "Domain":  "\"leonardoaccelerator.com\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    },
+    {
+        "Domain":  "\"leonardoaircraft-kw.com\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    },
+    {
+        "Domain":  "\"leonardocompany.com\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    },
+    {
+        "Domain":  "\"med-or.org\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    },
+    {
+        "Domain":  "\"otomelara.it\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    },
+    {
+        "Domain":  "\"selexelsag.com\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    },
+    {
+        "Domain":  "\"siriopanel.it\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    },
+    {
+        "Domain":  "\"Vitrociset.it\"",
+        "MX":  [
+
+               ],
+        "TXT":  [
+
+                ],
+        "DMARC":  [
+
+                  ]
+    }
+]
