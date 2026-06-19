@@ -40,16 +40,18 @@ $generatedAt = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
 $totalDomains = $records.Count
 
 function Get-DmarcPolicy {
-    param ([string[]]$DmarcValues)
-    foreach ($v in $DmarcValues) {
+    param ($DmarcValues)
+    foreach ($item in @($DmarcValues)) {
+        $v = if ($item -is [string]) { $item } else { $item.Value }
         if ($v -match 'p=(\w+)') { return $matches[1].ToLower() }
     }
     return $null
 }
 
 function Get-SpfRecord {
-    param ([string[]]$TxtValues)
-    foreach ($v in $TxtValues) {
+    param ($TxtValues)
+    foreach ($item in @($TxtValues)) {
+        $v = if ($item -is [string]) { $item } else { $item.Value }
         if ($v -match '^v=spf1') { return $v }
     }
     return $null
@@ -61,21 +63,34 @@ $domainRows = foreach ($rec in $records) {
 
     # MX rows
     $mxHtml = if ($rec.MX -and $rec.MX.Count -gt 0) {
-        $rows = ($rec.MX | Sort-Object Preference | ForEach-Object {
-            "<tr><td class='pref'>$($_.Preference)</td><td>$($_.Exchange)</td></tr>"
+        $rows = ($rec.MX | Sort-Object Preference, NameServer | ForEach-Object {
+            $ns  = if ($_.NameServer) { " via $($_.NameServer)" } else { '' }
+            "<tr><td class='pref'>$($_.Preference)</td><td>$($_.Exchange)$ns</td></tr>"
         }) -join ''
         "<table class='inner-table'><thead><tr><th>Pref</th><th>Exchange</th></tr></thead><tbody>$rows</tbody></table>"
     } else { "<span class='missing'>No MX records</span>" }
+    
+    # MX TTLs
+    $mxTtls = @($rec.MX | Where-Object { $_.TTL } | ForEach-Object { $_.TTL } | Sort-Object -Unique) -join ', '
+    $mxTtlHtml = if ($mxTtls) { $mxTtls } else { "<span class='muted'>-</span>" }
 
-    # TXT rows
+    # SPF records (TXT with v=spf1 only)
     $spf  = Get-SpfRecord -TxtValues $rec.TXT
-    $txtHtml = if ($rec.TXT -and $rec.TXT.Count -gt 0) {
-        $items = ($rec.TXT | ForEach-Object {
-            $cls = if ($_ -match '^v=spf1') { ' class="spf"' } else { '' }
-            "<li$cls>$([System.Web.HttpUtility]::HtmlEncode($_))</li>"
+    $spfHtml = if ($rec.TXT -and $rec.TXT.Count -gt 0) {
+        $spfRecords = @($rec.TXT | ForEach-Object {
+            $value = if ($_ -is [string]) { $_ } else { $_.Value }
+            if ($value -match '^v=spf1') {
+                $ttl = if ($_ -is [string]) { 'N/A' } else { $_.TTL }
+                "<tr><td>$([System.Web.HttpUtility]::HtmlEncode($value))</td><td class='ttl-inline'>$ttl</td></tr>"
+            }
         }) -join ''
-        "<ul class='txt-list'>$items</ul>"
-    } else { "<span class='missing'>No TXT records</span>" }
+        
+        if ($spfRecords) {
+            "<table class='inner-table txt-table'><thead><tr><th>Value</th><th>TTL</th></tr></thead><tbody>$spfRecords</tbody></table>"
+        } else {
+            "<span class='missing'>No SPF record</span>"
+        }
+    } else { "<span class='missing'>No SPF record</span>" }
 
     # DMARC
     $dmarcPolicy = Get-DmarcPolicy -DmarcValues $rec.DMARC
@@ -86,9 +101,15 @@ $domainRows = foreach ($rec in $records) {
             'none'       { 'badge-none' }
             default      { 'badge-unknown' }
         }
-        $encoded = [System.Web.HttpUtility]::HtmlEncode($rec.DMARC[0])
+        $dmarcFirstItem = $rec.DMARC[0]
+        $dmarcValue = if ($dmarcFirstItem -is [string]) { $dmarcFirstItem } else { $dmarcFirstItem.Value }
+        $encoded = [System.Web.HttpUtility]::HtmlEncode($dmarcValue)
         "<span class='badge $badgeClass'>$dmarcPolicy</span><br><span class='dmarc-value'>$encoded</span>"
     } else { "<span class='badge badge-warn'>No DMARC record</span>" }
+    
+    # DMARC TTLs
+    $dmarcTtls = @($rec.DMARC | Where-Object { $_.TTL } | ForEach-Object { $_.TTL } | Sort-Object -Unique) -join ', '
+    $dmarcTtlHtml = if ($dmarcTtls) { $dmarcTtls } else { "<span class='muted'>-</span>" }
 
     # SPF / DMARC status badges for summary column
     $spfBadge   = if ($spf)        { "<span class='badge badge-ok'>SPF</span>" }  else { "<span class='badge badge-warn'>No SPF</span>" }
@@ -100,20 +121,23 @@ $domainRows = foreach ($rec in $records) {
     @"
     <tr class="domain-row">
       <td class="domain-name">$domain</td>
+      <td class="ns-cell">$($rec.QueriedNameServer)</td>
       <td>$mxHtml</td>
-      <td>$txtHtml</td>
+      <td class="ttl-cell">$mxTtlHtml</td>
+      <td>$spfHtml</td>
       <td>$dmarcHtml</td>
+      <td class="ttl-cell">$dmarcTtlHtml</td>
       <td class="status-cell">$spfBadge $dmarcBadge</td>
     </tr>
 "@
 }
 
 # Summary counters
-$noSpf   = ($records | Where-Object { -not (Get-SpfRecord $_.TXT) }).Count
+$noSpf   = ($records | Where-Object { -not (Get-SpfRecord @($_.TXT)) }).Count
 $noDmarc = ($records | Where-Object { -not ($_.DMARC -and $_.DMARC.Count -gt 0) }).Count
-$dmarcNone       = ($records | Where-Object { (Get-DmarcPolicy $_.DMARC) -eq 'none' }).Count
-$dmarcQuarantine = ($records | Where-Object { (Get-DmarcPolicy $_.DMARC) -eq 'quarantine' }).Count
-$dmarcReject     = ($records | Where-Object { (Get-DmarcPolicy $_.DMARC) -eq 'reject' }).Count
+$dmarcNone       = ($records | Where-Object { (Get-DmarcPolicy @($_.DMARC)) -eq 'none' }).Count
+$dmarcQuarantine = ($records | Where-Object { (Get-DmarcPolicy @($_.DMARC)) -eq 'quarantine' }).Count
+$dmarcReject     = ($records | Where-Object { (Get-DmarcPolicy @($_.DMARC)) -eq 'reject' }).Count
 
 $html = @"
 <!DOCTYPE html>
@@ -171,12 +195,16 @@ $html = @"
     table.main td { padding: 10px 14px; vertical-align: top; }
 
     td.domain-name { font-weight: 600; color: var(--primary); white-space: nowrap; min-width: 160px; }
+    td.ns-cell { font-family: 'Courier New', monospace; font-size: 12px; color: var(--muted); white-space: nowrap; }
+    td.ttl-cell { font-family: 'Courier New', monospace; font-size: 12px; color: var(--muted); text-align: center; white-space: nowrap; }
     td.status-cell { white-space: nowrap; }
 
     table.inner-table { border-collapse: collapse; width: 100%; font-size: 12px; }
     table.inner-table thead tr { background: #e8f0fe; }
-    table.inner-table th { padding: 4px 8px; font-weight: 600; color: #444; }
+    table.inner-table th { padding: 4px 8px; font-weight: 600; color: #444; text-align: left; }
     table.inner-table td { padding: 3px 8px; border-top: 1px solid #eee; }
+    table.txt-table td { word-break: break-all; }
+    table.txt-table td.ttl-inline { text-align: center; white-space: nowrap; color: var(--muted); }
     td.pref { text-align: right; color: var(--muted); width: 36px; }
 
     ul.txt-list { list-style: none; padding: 0; margin: 0; font-size: 12px; }
@@ -198,6 +226,7 @@ $html = @"
     .badge-warn       { background: #fdecea; color: var(--warn); border: 1px solid #f5c6c3; }
 
     .missing { color: #aaa; font-style: italic; font-size: 12px; }
+    .muted { color: #ccc; font-style: italic; }
 
     .hidden { display: none; }
     .no-results { text-align: center; padding: 30px; color: var(--muted); font-style: italic; }
@@ -238,9 +267,12 @@ $html = @"
     <thead>
       <tr>
         <th>Domain</th>
+        <th>Nameserver</th>
         <th>MX Records</th>
-        <th>TXT Records</th>
+        <th>MX TTL</th>
+        <th>SPF</th>
         <th>DMARC</th>
+        <th>DMARC TTL</th>
         <th>Status</th>
       </tr>
     </thead>
