@@ -1,12 +1,13 @@
 <#
 .SYNOPSIS
-    Exports MX, TXT, and DMARC DNS records for a list of domains.
+    Exports MX, TXT, DMARC, and DKIM DNS records for a list of domains.
 
 .DESCRIPTION
     Reads a CSV file containing a "Domain" column and queries DNS for MX, TXT,
-    and DMARC (_dmarc TXT) records for each domain. Queries are sent to each
-    domain's authoritative name servers when available. Results include record
-    TTL and DNS query timings, and are exported as JSON.
+    DMARC (_dmarc TXT), and DKIM (selector._domainkey CNAME) records for each domain.
+    Queries common DKIM selectors (default, selector1, selector2, google, mandrill).
+    Queries are sent to each domain's authoritative name servers when available.
+    Results include record TTL and DNS query timings, and are exported as JSON.
 
 .PARAMETER CsvPath
     Path to the input CSV file. Must contain a "Domain" column.
@@ -233,6 +234,29 @@ foreach ($row in $domains) {
         } |
         Sort-Object Value, TTL -Unique
 
+    # DKIM records (selector._domainkey CNAME) - query common selectors
+    $dkimSelectors = @('default', 'selector1', 'selector2', 'google', 'mandrill')
+    $dkimQueryTimer = [System.Diagnostics.Stopwatch]::StartNew()
+    $dkimRecords = [System.Collections.Generic.List[object]]::new()
+
+    foreach ($selector in $dkimSelectors) {
+        $dkimName = "${selector}._domainkey.$domain"
+        $dkimResponses = Resolve-DnsAcrossServers -Name $dkimName -Type CNAME -Servers $queryServers -FallbackServer $DnsServer
+
+        $dkimResponses |
+            Where-Object { $_.Record.Type -eq 'CNAME' } |
+            ForEach-Object {
+                $dkimRecords.Add([PSCustomObject]@{
+                    Selector        = $selector
+                    Value           = $_.Record.NameHost.TrimEnd('.')
+                    TTL             = $_.Record.TTL
+                    QueryDurationMs = $_.QueryDurationMs
+                })
+            }
+    }
+    $dkimQueryTimer.Stop()
+    $dkimRecordsSorted = $dkimRecords | Sort-Object Selector, Value, TTL -Unique
+
     $results.Add([PSCustomObject]@{
         Domain             = $domain
         QueriedNameServer  = $queriedNameServer
@@ -240,11 +264,13 @@ foreach ($row in $domains) {
             MX    = $mxQueryTimer.ElapsedMilliseconds
             TXT   = $txtQueryTimer.ElapsedMilliseconds
             DMARC = $dmarcQueryTimer.ElapsedMilliseconds
-            Total = ($mxQueryTimer.ElapsedMilliseconds + $txtQueryTimer.ElapsedMilliseconds + $dmarcQueryTimer.ElapsedMilliseconds)
+            DKIM  = $dkimQueryTimer.ElapsedMilliseconds
+            Total = ($mxQueryTimer.ElapsedMilliseconds + $txtQueryTimer.ElapsedMilliseconds + $dmarcQueryTimer.ElapsedMilliseconds + $dkimQueryTimer.ElapsedMilliseconds)
         }
         MX                 = @($mxRecords)
         TXT                = @($txtRecords)
         DMARC              = @($dmarcRecords)
+        DKIM               = @($dkimRecordsSorted)
     })
 }
 

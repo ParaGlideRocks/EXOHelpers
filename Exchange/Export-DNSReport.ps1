@@ -4,13 +4,14 @@
 
 .DESCRIPTION
     Reads the JSON file produced by Export-DNSRecords.ps1 and generates a
-    styled, searchable HTML report showing MX, TXT, and DMARC records per domain.
+    styled, searchable HTML report showing MX, TXT, DMARC, and DKIM records per domain.
 
 .PARAMETER JsonPath
     Path to the JSON file produced by Export-DNSRecords.ps1.
 
 .PARAMETER OutputPath
-    Path for the HTML output file. Defaults to "DNSReport.html" beside the JSON.
+    Path for the HTML output file. Defaults to a matching filename derived from the JSON
+    (e.g., "yyyyMMdd-HHmmss_DNSRecordsReport.html" for "yyyyMMdd-HHmmss_DNSRecordsExport.json").
 
 .EXAMPLE
     .\Export-DNSReport.ps1 -JsonPath .\DNSRecordsExport.json
@@ -31,7 +32,13 @@ param (
 
 if (-not $OutputPath) {
     $jsonDir    = Split-Path -Parent (Resolve-Path $JsonPath)
-    $OutputPath = Join-Path $jsonDir 'DNSReport.html'
+    $jsonFile   = Split-Path -Leaf (Resolve-Path $JsonPath)
+    $htmlFile   = $jsonFile -replace 'DNSRecordsExport\.json$', 'DNSRecordsReport.html'
+    if ($htmlFile -eq $jsonFile) {
+        # Fallback if pattern doesn't match
+        $htmlFile = (Get-Item -Path $JsonPath).BaseName + '_Report.html'
+    }
+    $OutputPath = Join-Path $jsonDir $htmlFile
 }
 
 $records = Get-Content -Path $JsonPath -Raw | ConvertFrom-Json
@@ -57,6 +64,11 @@ function Get-SpfRecord {
     return $null
 }
 
+function Get-DkimSelectors {
+    param ($DkimRecords)
+    return @($DkimRecords | ForEach-Object { if ($_ -is [string]) { $_ } else { $_.Selector } } | Sort-Object -Unique)
+}
+
 # Build domain rows HTML
 $domainRows = foreach ($rec in $records) {
     $domain = $rec.Domain
@@ -80,17 +92,20 @@ $domainRows = foreach ($rec in $records) {
         $spfRecords = @($rec.TXT | ForEach-Object {
             $value = if ($_ -is [string]) { $_ } else { $_.Value }
             if ($value -match '^v=spf1') {
-                $ttl = if ($_ -is [string]) { 'N/A' } else { $_.TTL }
-                "<tr><td>$([System.Web.HttpUtility]::HtmlEncode($value))</td><td class='ttl-inline'>$ttl</td></tr>"
+                "<tr><td>$([System.Web.HttpUtility]::HtmlEncode($value))</td></tr>"
             }
         }) -join ''
         
         if ($spfRecords) {
-            "<table class='inner-table txt-table'><thead><tr><th>Value</th><th>TTL</th></tr></thead><tbody>$spfRecords</tbody></table>"
+            "<table class='inner-table txt-table'><thead><tr><th>Value</th></tr></thead><tbody>$spfRecords</tbody></table>"
         } else {
             "<span class='missing'>No SPF record</span>"
         }
     } else { "<span class='missing'>No SPF record</span>" }
+    
+    # SPF TTLs
+    $spfTtls = @($rec.TXT | Where-Object { $_ -isnot [string] -and $_.Value -match '^v=spf1' } | ForEach-Object { $_.TTL } | Sort-Object -Unique) -join ', '
+    $spfTtlHtml = if ($spfTtls) { $spfTtls } else { "<span class='muted'>-</span>" }
 
     # DMARC
     $dmarcPolicy = Get-DmarcPolicy -DmarcValues $rec.DMARC
@@ -111,12 +126,29 @@ $domainRows = foreach ($rec in $records) {
     $dmarcTtls = @($rec.DMARC | Where-Object { $_.TTL } | ForEach-Object { $_.TTL } | Sort-Object -Unique) -join ', '
     $dmarcTtlHtml = if ($dmarcTtls) { $dmarcTtls } else { "<span class='muted'>-</span>" }
 
+    # DKIM records (CNAME)
+    $dkimSelectors = Get-DkimSelectors -DkimRecords $rec.DKIM
+    $dkimHtml = if ($rec.DKIM -and $rec.DKIM.Count -gt 0) {
+        $rows = ($rec.DKIM | ForEach-Object {
+            $selector = if ($_ -is [string]) { $_ } else { $_.Selector }
+            $value = if ($_ -is [string]) { '' } else { $_.Value }
+            "<tr><td class='dkim-sel'>$selector</td><td class='dkim-val'>$([System.Web.HttpUtility]::HtmlEncode($value))</td></tr>"
+        }) -join ''
+        "<table class='inner-table txt-table'><thead><tr><th>Selector</th><th>CNAME Target</th></tr></thead><tbody>$rows</tbody></table>"
+    } else { "<span class='missing'>No DKIM records</span>" }
+    
+    # DKIM TTLs
+    $dkimTtls = @($rec.DKIM | Where-Object { $_.TTL } | ForEach-Object { $_.TTL } | Sort-Object -Unique) -join ', '
+    $dkimTtlHtml = if ($dkimTtls) { $dkimTtls } else { "<span class='muted'>-</span>" }
+
     # SPF / DMARC status badges for summary column
     $spfBadge   = if ($spf)        { "<span class='badge badge-ok'>SPF</span>" }  else { "<span class='badge badge-warn'>No SPF</span>" }
     $dmarcBadge = if ($dmarcPolicy -eq 'reject')     { "<span class='badge badge-reject'>DMARC: reject</span>" }
                   elseif ($dmarcPolicy -eq 'quarantine') { "<span class='badge badge-quarantine'>DMARC: quarantine</span>" }
                   elseif ($dmarcPolicy -eq 'none')    { "<span class='badge badge-none'>DMARC: none</span>" }
                   else                                { "<span class='badge badge-warn'>No DMARC</span>" }
+    $dkimBadge  = if ($dkimSelectors.Count -gt 0) { "<span class='badge badge-ok'>DKIM: $($dkimSelectors.Count)</span>" }
+                  else                              { "<span class='badge badge-warn'>No DKIM</span>" }
 
     @"
     <tr class="domain-row">
@@ -125,9 +157,12 @@ $domainRows = foreach ($rec in $records) {
       <td>$mxHtml</td>
       <td class="ttl-cell">$mxTtlHtml</td>
       <td>$spfHtml</td>
+      <td class="ttl-cell">$spfTtlHtml</td>
       <td>$dmarcHtml</td>
       <td class="ttl-cell">$dmarcTtlHtml</td>
-      <td class="status-cell">$spfBadge $dmarcBadge</td>
+      <td>$dkimHtml</td>
+      <td class="ttl-cell">$dkimTtlHtml</td>
+      <td class="status-cell">$spfBadge $dmarcBadge $dkimBadge</td>
     </tr>
 "@
 }
@@ -138,6 +173,7 @@ $noDmarc = ($records | Where-Object { -not ($_.DMARC -and $_.DMARC.Count -gt 0) 
 $dmarcNone       = ($records | Where-Object { (Get-DmarcPolicy @($_.DMARC)) -eq 'none' }).Count
 $dmarcQuarantine = ($records | Where-Object { (Get-DmarcPolicy @($_.DMARC)) -eq 'quarantine' }).Count
 $dmarcReject     = ($records | Where-Object { (Get-DmarcPolicy @($_.DMARC)) -eq 'reject' }).Count
+$noDkim  = ($records | Where-Object { -not ($_.DKIM -and $_.DKIM.Count -gt 0) }).Count
 
 $html = @"
 <!DOCTYPE html>
@@ -213,6 +249,9 @@ $html = @"
     ul.txt-list li.spf { color: var(--ok); font-weight: 600; }
 
     .dmarc-value { font-size: 11px; color: var(--muted); word-break: break-all; display: block; margin-top: 4px; }
+    
+    td.dkim-sel { font-weight: 600; color: var(--primary); white-space: nowrap; }
+    td.dkim-val { font-family: 'Courier New', monospace; font-size: 11px; color: var(--muted); word-break: break-all; }
 
     .badge {
       display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px;
@@ -248,6 +287,7 @@ $html = @"
   <div class="stat-card"><div class="num warn">$dmarcNone</div><div class="lbl">DMARC: none</div></div>
   <div class="stat-card"><div class="num warn">$noDmarc</div><div class="lbl">No DMARC</div></div>
   <div class="stat-card"><div class="num warn">$noSpf</div><div class="lbl">No SPF</div></div>
+  <div class="stat-card"><div class="num warn">$noDkim</div><div class="lbl">No DKIM</div></div>
 </div>
 
 <div class="controls">
@@ -271,8 +311,11 @@ $html = @"
         <th>MX Records</th>
         <th>MX TTL</th>
         <th>SPF</th>
+        <th>SPF TTL</th>
         <th>DMARC</th>
         <th>DMARC TTL</th>
+        <th>DKIM</th>
+        <th>DKIM TTL</th>
         <th>Status</th>
       </tr>
     </thead>
